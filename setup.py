@@ -16,7 +16,7 @@ packages = \
 package_data = \
 {'': ['*']}
 
-
+# noinspection PyUnresolvedReferences
 setup_kwargs = {
     'package_dir': package_dir,
     'packages': packages,
