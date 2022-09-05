@@ -306,6 +306,7 @@
 # import Prettyprinter.Internal
 from .Internal import *
 # import Prettyprinter.Symbols.Ascii
+from .Symbols.Ascii import *
 #
 # -- $setup
 # --
