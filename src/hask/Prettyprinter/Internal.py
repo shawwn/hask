@@ -119,6 +119,7 @@ from dataclasses import dataclass
 # #endif
 #
 # import Prettyprinter.Render.Util.Panic
+from .Render.Util.Panic import *
 #
 #
 #
@@ -154,7 +155,7 @@ class Doc:
             return [Doc.new(y) for y in x]
         if isinstance(x, tuple):
             return tuple([Doc.new(y) for y in x])
-        return unsafeTextWithoutNewlines(x)
+        return pretty(x)
     def __add__(self, other: Doc):
         return Doc_add(self, other)
     def __radd__(self, other: Doc):
@@ -975,8 +976,8 @@ def group(doc: Doc):
 #     -> Doc ann -- ^ Preferred when 'group'ed
 #     -> Doc ann
 # flatAlt = FlatAlt
-def flatAlt(first: Union[Doc, str], second: Union[Doc, str]):
-    return DocFlatAlt(Doc.new(first), Doc.new(second))
+def flatAlt(first: Doc, second: Doc):
+    return DocFlatAlt(first, second)
 
 #
 #
@@ -1034,6 +1035,30 @@ def align(doc: Doc):
 #     -> Doc ann
 # hang i d = align (nest i d)
 def hang(level: Int, doc: Doc):
+    """
+    | @('hang' i x)@ lays out the document @x@ with a nesting level set to the
+    /current column/ plus @i@. Negative values are allowed, and decrease the
+    nesting level accordingly.
+
+    >>> doc = reflow("Indenting these words with hang")
+    >>> putDocW(24, Doc.new("prefix") + hang(4, doc))
+    prefix Indenting these
+               words with
+               hang
+
+    This differs from 'nest', which is based on the /current nesting level/ plus
+    @i@. When you're not sure, try the more efficient 'nest' first. In our
+    example, this would yield
+
+    >>> doc = reflow("Indenting these words with nest")
+    >>> putDocW(24, Doc.new("prefix") + nest(4, doc))
+    prefix Indenting these
+        words with nest
+
+    @
+    'hang' i doc = 'align' ('nest' i doc)
+    @
+    """
     return align(nest(level, doc))
 
 # -- | @('indent' i x)@ indents document @x@ by @i@ columns, starting from the
@@ -1054,7 +1079,24 @@ def hang(level: Int, doc: Doc):
 #     -> Doc ann
 #     -> Doc ann
 # indent i d = hang i (spaces i <> d)
-#
+def indent(numSpaces: Int, doc: Doc) -> Doc:
+    """
+    | @('indent' i x)@ indents document @x@ by @i@ columns, starting from the
+    current cursor position.
+
+    >>> doc = reflow("The indent function indents these words!")
+    >>> putDocW(24, Doc.new("prefix") <<sassoc>> indent(4, doc))
+    prefix    The indent
+              function
+              indents these
+              words!
+
+    @
+    'indent' i d = 'hang' i ({i spaces} <> d)
+    @
+    """
+    return hang(numSpaces, spaces(numSpaces) <<sassoc>> doc)
+
 # -- | @('encloseSep' l r sep xs)@ concatenates the documents @xs@ separated by
 # -- @sep@, and encloses the resulting document by @l@ and @r@.
 # --
@@ -1088,10 +1130,32 @@ def hang(level: Int, doc: Doc):
 #     []  -> l <> r
 #     [d] -> l <> d <> r
 #     _   -> cat (zipWith (<>) (l : repeat s) ds) <> r
-def encloseSep(left: Union[Doc, str], right: Union[Doc, str], sep: Union[Doc, str], docs: List[Doc]) -> Doc:
-    left = Doc.new(left)
-    right = Doc.new(right)
-    sep = Doc.new(sep)
+def encloseSep(left: Doc, right: Doc, sep: Doc, docs: List[Doc]) -> Doc:
+    """
+    | @('encloseSep' l r sep xs)@ concatenates the documents @xs@ separated by
+    @sep@, and encloses the resulting document by @l@ and @r@.
+
+    The documents are laid out horizontally if that fits the page:
+
+    >>> doc = Doc.new("list") + align(encloseSep(lbracket(), rbracket(), comma(), [pretty(i) for i in [1,20,300,4000]]))
+    >>> putDocW(80, doc)
+    list [1,20,300,4000]
+
+    If there is not enough space, then the input is split into lines entry-wise
+    therwise they are laid out vertically, with separators put in the front:
+
+    >>> putDocW 10 doc
+    list [1
+         ,20
+         ,300
+         ,4000]
+
+    Note that @doc@ contains an explicit call to 'align' so that the list items
+    are aligned vertically.
+
+    For putting separators at the end of entries instead, have a look at
+    'punctuate'.
+    """
     if len(docs) <= 0:
         return left <<sassoc>> right
     elif len(docs) <= 1 and [d := docs[0]]:
@@ -1119,9 +1183,9 @@ def encloseSep(left: Union[Doc, str], right: Union[Doc, str], sep: Union[Doc, st
 #                           (flatAlt " ]" "]")
 #                           ", "
 def list_(docs: List[Doc]) -> Doc:
-    return group(encloseSep(flatAlt("[ ", "["),
-                            flatAlt(" ]", "]"),
-                            ", ",
+    return group(encloseSep(flatAlt(Doc.new("[ "), Doc.new("[")),
+                            flatAlt(Doc.new(" ]"), Doc.new("]")),
+                            Doc.new(", "),
                             docs))
 
 
@@ -1141,11 +1205,10 @@ def list_(docs: List[Doc]) -> Doc:
 # tupled :: [Doc ann] -> Doc ann
 # tupled = group . encloseSep (flatAlt "( " "(")
 #                             (flatAlt " )" ")")
-#                             ", "
 def tupled(docs: List[Doc]) -> Doc:
-    return group(encloseSep(flatAlt("( ", "("),
-                            flatAlt(" )", ")"),
-                            ", ",
+    return group(encloseSep(flatAlt(Doc.new("( "), Doc.new("(")),
+                            flatAlt(Doc.new(" )"), Doc.new(")")),
+                            Doc.new(", "),
                             docs))
 #
 #
@@ -2488,6 +2551,7 @@ def layoutPretty(options: LayoutOptions, doc: Doc) -> SimpleDocStream:
 #             SAnnPush _ s -> go s
 #             SAnnPop s    -> go s
 def layoutUnbounded(doc: Doc) -> SimpleDocStream:
+    """Layout a document with @Unbounded@ page width."""
     def fittingPredicate(_lineIndent: Int, _currentColumn: Int, initialIndentY: Optional[Int], sdoc: SimpleDocStream):
         return not failsOnFirstLine(sdoc)
     def failsOnFirstLine(sds: SimpleDocStream):
@@ -2519,6 +2583,7 @@ def layoutUnbounded(doc: Doc) -> SimpleDocStream:
 #     pageWidth_
 #     doc
 def layoutWadlerLeijen(fits: Callable[[Int, Int, Optional[Int], SimpleDocStream], Bool], pageWidth_: PageWidth, doc: Doc):
+    """The Wadler/Leijen layout algorithm"""
     # print('layoutWadlerLeijen', pageWidth_, doc)
     # = best 0 0 (Cons 0 doc Nil)
     # where
@@ -2831,7 +2896,10 @@ def layoutCompact(doc: Doc):
 # -- ignoring all annotations.
 # instance Show (Doc ann) where
 #     showsPrec _ doc = renderShowS (layoutPretty defaultLayoutOptions doc)
-#
+@Show.show.register
+def Show_show_Doc(doc: Doc) -> str:
+    return renderShow(layoutPretty(defaultLayoutOptions(), doc))
+
 # -- | Render a 'SimpleDocStream' to a 'ShowS', useful to write 'Show' instances
 # -- based on the prettyprinter.
 # --
@@ -2848,9 +2916,17 @@ def layoutCompact(doc: Doc):
 #     SLine i x    -> showString ('\n' : replicate i ' ') . renderShowS x
 #     SAnnPush _ x -> renderShowS x
 #     SAnnPop x    -> renderShowS x
-def renderShow(sds: SimpleDocStream):
+def renderShow(sds: SimpleDocStream) -> str:
+    """Render a 'SimpleDocStream' to a 'ShowS', useful to write 'Show' instances
+    based on the prettyprinter.
+
+    @
+    instance 'Show' MyType where
+        'showsPrec' _ = 'renderShowS' . 'layoutPretty' 'defaultLayoutOptions' . 'pretty'
+    @
+    """
     if isinstance(sds, SFail):
-        notimplemented("Uncaught SFail", sds)
+        return panicUncaughtFail()
     if isinstance(sds, SEmpty):
         return ""
     if isinstance(sds, SChar) and [c := sds.char, x := sds.rest]:
@@ -2880,7 +2956,7 @@ def renderShow(sds: SimpleDocStream):
 # -- (See <https://github.com/quchen/prettyprinter/issues/131>.)
 # textSpaces :: Int -> Text
 # textSpaces n = T.replicate n (T.singleton ' ')
-def textSpaces(n: int):
+def textSpaces(n: int) -> str:
     return replicate(n, ' ')
 
 #
@@ -2912,3 +2988,8 @@ def textSpaces(n: int):
 
 # >>> putDocW(32, reflow("Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."))
 # 'Lorem ipsum dolor sit amet,\nconsectetur adipisicing elit,\nsed do eiusmod tempor incididunt\nut labore et dolore magna\naliqua.'
+
+# >>> print(Doc.Util.putDocW(10, Doc.brackets(Doc.fillSep(Doc.punctuate(Doc.comma(), Doc.Doc.new("a b c foo bar baz".split()))))))
+# [a, b, c,
+# foo, bar,
+# baz]

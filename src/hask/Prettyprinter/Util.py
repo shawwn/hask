@@ -23,6 +23,11 @@ from . import *
 # words :: Text -> [Doc ann]
 # words = map pretty . T.words
 def words(s: Text) -> List[Doc]:
+    """Split an input into word-sized 'Doc's.
+
+    >>> putDoc(tupled(words("Lorem ipsum dolor")))
+    (Lorem, ipsum, dolor)
+    """
     return [pretty(x) for x in s.split()]
 
 # -- | Insert soft linebreaks between words, so that text is broken into multiple

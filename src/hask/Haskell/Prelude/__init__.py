@@ -349,3 +349,9 @@ def show(self) -> str:
 
 def repeat(self: T, times: Int) -> Iterable[T]:
     return itertools.repeat(self, times)
+
+class Error(Exception):
+    pass
+
+def error(msg: str, *args):
+    raise Error(msg, *args)

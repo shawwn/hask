@@ -5,3 +5,4 @@ del version
 
 from .runtime import *
 from .Haskell.Prelude import *
+from . import System
