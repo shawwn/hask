@@ -14,40 +14,40 @@ from ...runtime import *
 def add(a: T, b: T) -> T:
     return a + b
 
-iadd = infix(add)
+iadd: infix = infix(add)
 
 def sub(a: T, b: T) -> T:
     return a - b
 
-isub = infix(sub)
+isub: infix = infix(sub)
 
 def mod(a: T, b: T) -> T:
     """TODO: Check whether this is equivalent to haskell's `mod` function."""
     return a % b
 
-imod = infix(mod)
+imod: infix = infix(mod)
 
 def rem(a: T, b: T) -> T:
     """TODO: Check whether this is equivalent to haskell's `rem` function."""
     return a % b
 
-irem = infix(rem)
+irem: infix = infix(rem)
 
 def div(a: T, b: T) -> Int:
     """TODO: Check whether this is equivalent to haskell's `div` function."""
     return a // b
 
-idiv = infix(div)
+idiv: infix = infix(div)
 
 def divMod(a: T, b: T) -> Tuple[Int, T]:
     return div(a, b), mod(a, b)
 
-idivMod = infix(divMod)
+idivMod: infix = infix(divMod)
 
 def floor(a: T) -> Int:
     return int(math.floor(a))
 
-ifloor = infix(floor)
+ifloor: infix = infix(floor)
 
 def id_(a: A) -> A:
     """Identity function.
@@ -65,7 +65,7 @@ def const(a: A, _b: B) -> A:
     See https://hackage.haskell.org/package/base-4.4.1.0/docs/Prelude.html#v:const"""
     return a
 
-iconst = infix(const)
+iconst: infix = infix(const)
 
 def compose(f: Callable[[B], C], g: Callable[[A], B]):
     """Function composition.
@@ -78,7 +78,7 @@ def compose(f: Callable[[B], C], g: Callable[[A], B]):
         return f(g(a))
     return f_then_g_1
 
-icompose = infix(compose)
+icompose: infix = infix(compose)
 
 def compose2(f: Callable[[B], C], g: Callable[[A, A2], B]):
     """Function composition.
@@ -91,7 +91,7 @@ def compose2(f: Callable[[B], C], g: Callable[[A, A2], B]):
         return f(g(a, a2))
     return f_then_g_2
 
-icompose2 = infix(compose2)
+icompose2: infix = infix(compose2)
 
 def compose3(f: Callable[[B], C], g: Callable[[A, A2, A3], B]):
     """Function composition.
@@ -104,7 +104,7 @@ def compose3(f: Callable[[B], C], g: Callable[[A, A2, A3], B]):
         return f(g(a, a2, a3))
     return f_then_g_3
 
-icompose3 = infix(compose3)
+icompose3: infix = infix(compose3)
 
 def zipWith(f: Callable[[A, B], R], xs: Iterable[A], ys: Iterable[B]) -> List[R]:
     """makes a list, its elements are calculated from the function and the elements of
