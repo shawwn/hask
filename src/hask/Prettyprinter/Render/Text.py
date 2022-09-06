@@ -163,6 +163,10 @@ def putDoc(doc: Doc):
     """
     return hPutDoc(stdout(), doc)
 
+def printDoc(doc: Doc):
+    putDoc(doc)
+    print()
+
 # -- | Like 'putDoc', but instead of using 'stdout', print to a user-provided
 # -- handle, e.g. a file or a socket. Uses the 'defaultLayoutOptions'.
 # --

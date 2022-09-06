@@ -8,8 +8,10 @@
 # import           Data.Text                             (Text)
 # import qualified Data.Text                             as T
 # import           Prettyprinter.Render.Text
+from ..Prettyprinter.Render.Text import *
 # import           Prelude                               hiding (words)
 # import           System.IO
+from ..System.IO import *
 #
 # import Prettyprinter
 from . import *
@@ -75,9 +77,14 @@ def reflow(s: Text) -> Doc:
 # putDocW w doc = renderIO System.IO.stdout (layoutPretty layoutOptions (unAnnotate doc))
 #   where
 #     layoutOptions = LayoutOptions { layoutPageWidth = AvailablePerLine w 1 }
-def putDocW(w: Int, doc: Doc) -> Text:
+def putDocW(w: Int, doc: Doc):
     layoutOptions = LayoutOptions(layoutPageWidth=AvailablePerLine(w, 1.0))
-    return renderShow(layoutPretty(layoutOptions, unAnnotate(doc)))
+    return renderIO(System.IO.stdout(), layoutPretty(layoutOptions, unAnnotate(doc)))
+
+def printDocW(w: Int, doc: Doc):
+    putDocW(w, doc)
+    print()
+
 
 #
 #

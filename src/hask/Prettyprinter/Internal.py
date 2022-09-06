@@ -147,6 +147,28 @@ from .Render.Util.Panic import *
 # data Doc ann =
 @dataclass(frozen=True)
 class Doc:
+    """The abstract data type @'Doc' ann@ represents pretty documents that have
+    been annotated with data of type @ann@.
+
+    More specifically, a value of type @'Doc'@ represents a non-empty set of
+    possible layouts of a document. The layout functions select one of these
+    possibilities, taking into account things like the width of the output
+    document.
+
+    The annotation is an arbitrary piece of data associated with (part of) a
+    document. Annotations may be used by the rendering backends in order to
+    display output differently, such as
+
+      - color information (e.g. when rendering to the terminal)
+      - mouseover text (e.g. when rendering to rich HTML)
+      - whether to show something or not (to allow simple or detailed versions)
+
+    The simplest way to display a 'Doc' is via the 'Show' class.
+
+    >>> putStrLn(show(vsep(Doc.new(["hello", "world"]))))
+    hello
+    world
+    """
     @classmethod
     def new(cls, x: Union[Doc, str, List[str]]):
         if isinstance(x, Doc):
@@ -156,37 +178,50 @@ class Doc:
         if isinstance(x, tuple):
             return tuple([Doc.new(y) for y in x])
         return pretty(x)
-    def __add__(self, other: Doc):
+    def __add__(self, other: Union[Doc, str]):
         return Doc_add(self, other)
-    def __radd__(self, other: Doc):
-        return Doc_add(self, other)
-    def sassoc(self, other: Doc):
+    def __radd__(self, other: Union[Doc, str]):
+        return Doc_add(other, self)
+    def sassoc(self, other: Union[Doc, str]):
         return Semigroup_sassoc_Doc(self, other)
     def sconcat(self, docs: List[Doc]):
         return Semigroup_sconcat_Doc(self, docs)
     def stimes(self, n: Int):
         return Semigroup_stimes_Doc(self, n)
+    def height(self) -> Int:
+        return 0
+    def balance(self) -> Int:
+        return 0
 
 #     -- | Occurs when flattening a line. The layouter will reject this document,
 #     -- choosing a more suitable rendering.
 #     Fail
 @dataclass(frozen=True)
 class DocFail(Doc):
-    pass
+    """Occurs when flattening a line. The layouter will reject this document,
+    choosing a more suitable rendering."""
+    def __repr__(self):
+        return f"Fail"
 
 #     -- | The empty document; conceptually the unit of 'Cat'
 #     | Empty
 @dataclass(frozen=True)
 class DocEmpty(Doc):
-    pass
+    """The empty document; conceptually the unit of 'Cat'"""
+    def __repr__(self):
+        return f"Empty"
 #
 #     -- | invariant: not '\n'
 #     | Char !Char
 @dataclass(frozen=True)
 class DocChar(Doc):
+    """invariant: not '\n'"""
     char: Char
     if TYPE_CHECKING:
         def __init__(self, char: Char): ...
+    def __repr__(self):
+        # return f"Char({self.char!r})"
+        return f"{self.char!r}"
 #
 #     -- | Invariants: at least two characters long, does not contain '\n'. For
 #     -- empty documents, there is @Empty@; for singleton documents, there is
@@ -197,16 +232,27 @@ class DocChar(Doc):
 #     | Text !Int !Text
 @dataclass(frozen=True)
 class DocText(Doc):
+    """Invariants: at least two characters long, does not contain '\n'. For
+    empty documents, there is @Empty@; for singleton documents, there is
+    @Char@; newlines should be replaced by e.g. @Line@.
+
+    Since the frequently used 'T.length' of 'Text' is /O(length)/, we cache
+    it in this constructor."""
     size: Int
     text: Text
     if TYPE_CHECKING:
         def __init__(self, size: Int, text: Text): ...
+    def __repr__(self):
+        # return f"Text({self.text!r})"
+        return f"{self.text!r}"
 
 #     -- | Hard line break
 #     | Line
 @dataclass(frozen=True)
 class DocLine(Doc):
-    pass
+    """Hard line break"""
+    def __repr__(self):
+        return f"Line"
 
 #     -- | Lay out the first 'Doc', but when flattened (via 'group'), prefer
 #     -- the second.
@@ -216,28 +262,133 @@ class DocLine(Doc):
 #     | FlatAlt (Doc ann) (Doc ann)
 @dataclass(frozen=True)
 class DocFlatAlt(Doc):
+    """Lay out the first 'Doc', but when flattened (via 'group'), prefer
+    the second.
+
+    The layout algorithms work under the assumption that the first
+    alternative is less wide than the flattened second alternative."""
     first: Doc
     second: Doc
     if TYPE_CHECKING:
         def __init__(self, first: Doc, second: Doc): ...
+    def __repr__(self):
+        return f"FlatAlt({self.first!r}, {self.second!r})"
+    def height(self) -> Int:
+        return 1 + max(self.first.height(),
+                       self.second.height())
+    def balance(self) -> Int:
+        return self.first.height() - self.second.height()
 
 #     -- | Concatenation of two documents
 #     | Cat (Doc ann) (Doc ann)
 @dataclass(frozen=True)
 class DocCat(Doc):
+    """Concatenation of two documents"""
     first: Doc
     second: Doc
     if TYPE_CHECKING:
         def __init__(self, first: Doc, second: Doc): ...
+    def __repr__(self):
+        if False:
+            return f"Cat({self.first!r}, {self.second!r})"
+        elif True:
+            with with_indent(4):
+                ind = indentation()
+                return f"Cat[balance={self.balance()}, first.height={self.first.height()}, second.height={self.second.height()}](\n{ind}{self.first!r},\n{ind}{self.second!r})"
+        else:
+            lh = repr(self.first)
+            rh = repr(self.second)
+            if lh.startswith("'") and lh.endswith("'"):
+                if rh.startswith("'") and rh.endswith("'"):
+                    return lh[:-1] + rh[1:]
+            return lh + ", " + rh
+    def height(self) -> Int:
+        return 1 + max(self.first.height(),
+                       self.second.height())
+    def balance(self) -> Int:
+        return self.first.height() - self.second.height()
+
+    def rotate_right(self) -> Optional[DocCat]:
+        pivot = self.first
+        if isinstance(pivot, DocCat):
+            return DocCat(pivot.first, DocCat(pivot.second, self.second))
+
+    def rotate_left(self) -> Optional[DocCat]:
+        pivot = self.second
+        if isinstance(pivot, DocCat):
+            return DocCat(DocCat(self.first, pivot.first), pivot.second)
+
+    def balanced(self) -> DocCat:
+        root = None
+        bal = self.balance()
+        if bal <= -2:
+            root = self.rotate_left()
+        elif bal >= 2:
+            root = self.rotate_right()
+        if root is not None:
+            first, second = root.first, root.second
+            if isinstance(first, DocCat):
+                first = first.balanced()
+            if isinstance(second, DocCat):
+                second = second.balanced()
+            return DocCat(first, second).balanced()
+        return self
+
+
+
+    def balanced_(self, root: DocCat) -> DocCat:
+        """
+        Main rebalance routine to rebalance the tree rooted at root appropriately using rotations.
+        4 cases:
+        1) bf(root) = 2 and bf(root.left) < 0 ==> L-R Imbalance
+        2) bf(root) = 2 ==> L-L Imbalance
+        3) bf(root) = -2 and bf(root.right) > 0 ==> R-L Imbalance
+        4) bf(root) = -2 ==> R-R Imbalance
+        :param root: root of tree needing rebalancing.
+        :return: root of resulting tree after rotations
+        """
+        # if root.bf == 2:
+        #     if root.left.bf < 0:  # L-R
+        #         root.left = self.rotate_left(root.left)
+        #         return self.rotate_right(root)
+        #     else:  # L-L
+        #         return self.rotate_right(root)
+        # elif root.bf == -2:
+        #     if root.right.bf > 0:  # R-L
+        #         root.right = self.rotate_right(root.right)
+        #         return self.rotate_left(root)
+        #     else:  # R-R
+        #         return self.rotate_left(root)
+        # else:
+        #     return root  # no need to rebalance
+        bf = root.balance()
+        if bf >= 2:
+            b = root.first.balance() # L-R
+            if b < 0:
+                pass
+            else:
+                return self.rotate_right()
+        elif bf <= -2:
+            pass
+        else:
+            return root
+
 
 #     -- | Document indented by a number of columns
 #     | Nest !Int (Doc ann)
 @dataclass(frozen=True)
 class DocNest(Doc):
+    """Document indented by a number of columns"""
     columns: Int
     doc: Doc
     if TYPE_CHECKING:
         def __init__(self, columns: Int, doc: Doc): ...
+    def __repr__(self):
+        return f"Nest({self.columns!r}, {self.doc!r})"
+    def height(self) -> Int:
+        return 1 + self.doc.height()
+    def balance(self) -> Int:
+        return self.doc.balance()
 
 #     -- | Invariant: The first lines of first document should be longer than the
 #     -- first lines of the second one, so the layout algorithm can pick the one
@@ -245,45 +396,72 @@ class DocNest(Doc):
 #     | Union (Doc ann) (Doc ann)
 @dataclass(frozen=True)
 class DocUnion(Doc):
+    """Invariant: The first lines of first document should be longer than the
+    first lines of the second one, so the layout algorithm can pick the one
+    that fits best. Used to implement layout alternatives for 'group'."""
     first: Doc
     second: Doc
     if TYPE_CHECKING:
         def __init__(self, first: Doc, second: Doc):
             ...
+    def __repr__(self):
+        return f"Union(\n  {self.first!r},\n  {self.second!r})"
+    def height(self) -> Int:
+        return 1 + max(self.first.height(),
+                       self.second.height())
+    def balance(self) -> Int:
+        return self.first.height() - self.second.height()
 
 #     -- | React on the current cursor position, see 'column'
 #     | Column (Int -> Doc ann)
 @dataclass(frozen=True)
 class DocColumn(Doc):
+    """React on the current cursor position, see 'column'"""
     action: Callable[[Int], Doc]
     if TYPE_CHECKING:
         def __init__(self, action: Callable[[Int], Doc]): ...
+    def __repr__(self):
+        return f"Column({self.action!r})"
 
 #     -- | React on the document's width, see 'pageWidth'
 #     | WithPageWidth (PageWidth -> Doc ann)
 @dataclass(frozen=True)
 class DocWithPageWidth(Doc):
+    """React on the document's width, see 'pageWidth'"""
     action: Callable[[PageWidth], Doc]
     if TYPE_CHECKING:
         def __init__(self, action: Callable[[PageWidth], Doc]): ...
+    def __repr__(self):
+        return f"WithPageWidth({self.action!r})"
 
 #     -- | React on the current nesting level, see 'nesting'
 #     | Nesting (Int -> Doc ann)
 @dataclass(frozen=True)
 class DocNesting(Doc):
+    """React on the current nesting level, see 'nesting'"""
     action: Callable[[Int], Doc]
     if TYPE_CHECKING:
         def __init__(self, action: Callable[[Int], Doc]): ...
+    def __repr__(self):
+        return f"Nesting({self.action!r})"
 
 #     -- | Add an annotation to the enclosed 'Doc'. Can be used for example to add
 #     -- styling directives or alt texts that can then be used by the renderer.
 #     | Annotated ann (Doc ann)
 @dataclass(frozen=True)
 class DocAnnotated(Doc):
+    """Add an annotation to the enclosed 'Doc'. Can be used for example to add
+    styling directives or alt texts that can then be used by the renderer."""
     tag: Any
     doc: Doc
     if TYPE_CHECKING:
         def __init__(self, tag: Any, doc: Doc): ...
+    def __repr__(self):
+        return f"Annotated({self.tag!r}, {self.doc!r})"
+    def height(self) -> Int:
+        return 1 + self.doc.height()
+    def balance(self) -> Int:
+        return self.doc.balance()
 
 #     deriving (Generic, Typeable)
 #
@@ -299,6 +477,19 @@ class DocAnnotated(Doc):
 
 @Semigroup.sassoc.register(Doc)
 def Semigroup_sassoc_Doc(self: Doc, other: Doc):
+    """
+    @
+    x '<>' y = 'hcat' [x, y]
+    @
+
+    >>> pretty("hello") <<sassoc>> pretty("world")
+    helloworld
+    """
+    if not isinstance(self, Doc):
+        self = pretty(self)
+    if not isinstance(other, Doc):
+        other = pretty(other)
+    # return DocCat(self, other).balanced()
     return DocCat(self, other)
 
 #     sconcat (x :| xs) = hcat (x:xs)
@@ -378,6 +569,18 @@ def Semigroup_stimes_Doc(x: Doc, n: Int):
 #     mempty = emptyDoc
 #     mappend = (<>)
 #     mconcat = hcat
+
+@Monoid.mempty.register(Doc)
+def Monoid_mempty_Doc():
+    return emptyDoc()
+
+@Monoid.mappend.register(Doc)
+def Monoid_mappend_Doc(a: Doc, b: Doc) -> Doc:
+    return a <<sassoc>> b
+
+@Monoid.mconcat.register(Doc)
+def Monoid_mconcat_Doc(xs: List[Doc]) -> Doc:
+    return hcat(xs)
 #
 # -- | >>> pretty ("hello\nworld")
 # -- hello
@@ -464,7 +667,7 @@ def prettyList(self: Iterable) -> Doc:
 # instance Pretty a => Pretty [a] where
 #     pretty = prettyList
 @Pretty.pretty.register(Seq)
-def pretty_seq(x: Iterable):
+def pretty_seq(x: Iterable) -> Doc:
     return prettyList(x)
 
 # instance Pretty a => Pretty (NonEmpty a) where
@@ -486,12 +689,12 @@ def pretty_seq(x: Iterable):
 #     pretty True  = "True"
 #     pretty False = "False"
 @Pretty.pretty.register(bool)
-def pretty_bool(x: bool):
+def pretty_bool(x: bool) -> Doc:
     if x is True:
-        return "True"
+        return pretty("True")
     else:
         assert x is False
-        return "False"
+        return pretty("False")
 #
 # -- | Instead of @('pretty' '\n')@, consider using @'line'@ as a more readable
 # -- alternative.
@@ -515,14 +718,14 @@ def pretty_bool(x: bool):
 # -- 'unsafeViaShow'.
 # viaShow :: Show a => a -> Doc ann
 # viaShow = pretty . T.pack . show
-def viaShow(a):
+def viaShow(a) -> Doc:
     return pretty(show(a))
 
 # -- | Convenience function to convert a 'Show'able value /that must not contain
 # -- newlines/ to a 'Doc'. If there may be newlines, use 'viaShow' instead.
 # unsafeViaShow :: Show a => a -> Doc ann
 # unsafeViaShow = unsafeTextWithoutNewlines . T.pack . show
-def unsafeViaShow(a: T):
+def unsafeViaShow(a: T) -> Doc:
     return unsafeTextWithoutNewlines(show(a))
 
 # -- | >>> pretty (123 :: Int)
@@ -733,7 +936,7 @@ def line():
 # line' :: Doc ann
 # line' = FlatAlt Line mempty
 def line_():
-    return DocFlatAlt(DocLine(), DocEmpty())
+    return DocFlatAlt(DocLine(), mempty(Doc))
 
 # -- | @softline@ behaves like @'space'@ if the resulting output fits the page,
 # -- otherwise like @'line'@.
@@ -780,7 +983,7 @@ def softline():
 # softline' :: Doc ann
 # softline' = Union mempty Line
 def softline_():
-    return DocUnion(DocEmpty(), DocLine())
+    return DocUnion(mempty(Doc), DocLine())
 
 # -- | A @'hardline'@ is /always/ laid out as a line break, even when 'group'ed or
 # -- when there is plenty of space. Note that it might still be simply discarded
@@ -797,6 +1000,19 @@ def softline_():
 # hardline :: Doc ann
 # hardline = Line
 def hardline():
+    """A @'hardline'@ is /always/ laid out as a line break, even when 'group'ed or
+    when there is plenty of space. Note that it might still be simply discarded
+    if it is part of a 'flatAlt' inside a 'group'.
+
+    >>> doc = Doc.new("lorem ipsum") <<sassoc>> hardline() <<sassoc>> Doc.new("dolor sit amet")
+    >>> putDocW(1000, doc)
+    lorem ipsum
+    dolor sit amet
+
+    >>> group(doc)
+    lorem ipsum
+    dolor sit amet
+    """
     return DocLine()
 
 # -- | @('group' x)@ tries laying out @x@ into a single line by removing the
@@ -820,8 +1036,36 @@ def hardline():
 #         Flattened x' -> Union x' x
 #         AlreadyFlat  -> x
 #         NeverFlat    -> x
-def group(doc: Doc):
-    return doc
+def group(x: Doc):
+    """@('group' x)@ tries laying out @x@ into a single line by removing the
+    contained line breaks; if this does not fit the page, or when a 'hardline'
+    within @x@ prevents it from being flattened, @x@ is laid out without any
+    changes.
+
+    The 'group' function is key to layouts that adapt to available space nicely.
+
+    See 'vcat', 'line', or 'flatAlt' for examples that are related, or make good
+    use of it."""
+    if isinstance(x, DocUnion):
+        return x
+    if isinstance(x, DocFlatAlt) and [a := x.first, b := x.second]:
+        it = changesUponFlattening(b)
+        if isinstance(it, Flattened) and [b_ := it.a]:
+            return DocUnion(b_, a)
+        if isinstance(it, AlreadyFlat):
+            return DocUnion(b, a)
+        if isinstance(it, NeverFlat):
+            return a
+        return notimplemented("group.DocFlatAlt", it)
+    else:
+        it = changesUponFlattening(x)
+        if isinstance(it, Flattened) and [x_ := it.a]:
+            return DocUnion(x_, x)
+        if isinstance(it, AlreadyFlat):
+            return x
+        if isinstance(it, NeverFlat):
+            return x
+        return notimplemented("group.else", it)
 
 # -- Note [Group: special flattening]
 # --
@@ -837,18 +1081,44 @@ def group(doc: Doc):
 # -- ticket.
 #
 # data FlattenResult a
+@dataclass(frozen=True)
+class FlattenResult:
+    pass
 #     = Flattened a
 #     -- ^ @a@ is likely flatter than the input.
+@dataclass(frozen=True)
+class Flattened(FlattenResult):
+    """@a@ is likely flatter than the input."""
+    a: Any
 #     | AlreadyFlat
 #     -- ^ The input was already flat, e.g. a 'Text'.
+@dataclass(frozen=True)
+class AlreadyFlat(FlattenResult):
+    """The input was already flat, e.g. a 'Text'."""
 #     | NeverFlat
 #     -- ^ The input couldn't be flattened: It contained a 'Line' or 'Fail'.
+@dataclass(frozen=True)
+class NeverFlat(FlattenResult):
+    """The input couldn't be flattened: It contained a 'Line' or 'Fail'."""
+
 
 # instance Functor FlattenResult where
 #     fmap f (Flattened a) = Flattened (f a)
 #     fmap _ AlreadyFlat   = AlreadyFlat
 #     fmap _ NeverFlat     = NeverFlat
-#
+
+@Functor.fmap.register(Flattened)
+def Functor_fmap_Flattened(self: Flattened, f: Callable[[Any], R]) -> R:
+    return f(self.a)
+
+@Functor.fmap.register(AlreadyFlat)
+def Functor_fmap_AlreadyFlat(self: AlreadyFlat, f: Callable):
+    return AlreadyFlat()
+
+@Functor.fmap.register(NeverFlat)
+def Functor_fmap_NeverFlat(self: NeverFlat, f: Callable):
+    return NeverFlat()
+
 # -- | Choose the first element of each @Union@, and discard the first field of
 # -- all @FlatAlt@s.
 # --
@@ -859,47 +1129,155 @@ def group(doc: Doc):
 # -- contains a hard 'Line' or 'Fail'.
 # -- See [Group: special flattening] for further explanations.
 # changesUponFlattening :: Doc ann -> FlattenResult (Doc ann)
-# changesUponFlattening = \doc -> case doc of
-#     FlatAlt _ y     -> Flattened (flatten y)
-#     Line            -> NeverFlat
-#     Union x _       -> Flattened x
-#     Nest i x        -> fmap (Nest i) (changesUponFlattening x)
-#     Annotated ann x -> fmap (Annotated ann) (changesUponFlattening x)
-#
-#     Column f        -> Flattened (Column (flatten . f))
-#     Nesting f       -> Flattened (Nesting (flatten . f))
-#     WithPageWidth f -> Flattened (WithPageWidth (flatten . f))
-#
-#     Cat x y -> case (changesUponFlattening x, changesUponFlattening y) of
-#         (NeverFlat    ,  _          ) -> NeverFlat
-#         (_            , NeverFlat   ) -> NeverFlat
-#         (Flattened x' , Flattened y') -> Flattened (Cat x' y')
-#         (Flattened x' , AlreadyFlat ) -> Flattened (Cat x' y)
-#         (AlreadyFlat  , Flattened y') -> Flattened (Cat x y')
-#         (AlreadyFlat  , AlreadyFlat ) -> AlreadyFlat
-#
-#     Empty  -> AlreadyFlat
-#     Char{} -> AlreadyFlat
-#     Text{} -> AlreadyFlat
-#     Fail   -> NeverFlat
-#   where
-#     -- Flatten, but don’t report whether anything changes.
-#     flatten :: Doc ann -> Doc ann
-#     flatten = \doc -> case doc of
-#         FlatAlt _ y     -> flatten y
-#         Cat x y         -> Cat (flatten x) (flatten y)
-#         Nest i x        -> Nest i (flatten x)
-#         Line            -> Fail
-#         Union x _       -> flatten x
-#         Column f        -> Column (flatten . f)
-#         WithPageWidth f -> WithPageWidth (flatten . f)
-#         Nesting f       -> Nesting (flatten . f)
-#         Annotated ann x -> Annotated ann (flatten x)
-#
-#         x@Fail   -> x
-#         x@Empty  -> x
-#         x@Char{} -> x
-#         x@Text{} -> x
+def changesUponFlattening(doc: Doc) -> FlattenResult:
+    """Choose the first element of each @Union@, and discard the first field of
+    all @FlatAlt@s.
+
+    The result is 'Flattened' if the element might change depending on the layout
+    algorithm (i.e. contains differently renderable sub-documents), and 'AlreadyFlat'
+    if the document is static (e.g. contains only a plain 'Empty' node).
+    'NeverFlat' is returned when the document cannot be flattened because it
+    contains a hard 'Line' or 'Fail'.
+    See [Group: special flattening] for further explanations."""
+    # where
+    #   -- Flatten, but don’t report whether anything changes.
+    #   flatten :: Doc ann -> Doc ann
+    #   flatten = \doc -> case doc of
+    #       FlatAlt _ y     -> flatten y
+    #       Cat x y         -> Cat (flatten x) (flatten y)
+    #       Nest i x        -> Nest i (flatten x)
+    #       Line            -> Fail
+    #       Union x _       -> flatten x
+    #       Column f        -> Column (flatten . f)
+    #       WithPageWidth f -> WithPageWidth (flatten . f)
+    #       Nesting f       -> Nesting (flatten . f)
+    #       Annotated ann x -> Annotated ann (flatten x)
+    #
+    #       x@Fail   -> x
+    #       x@Empty  -> x
+    #       x@Char{} -> x
+    #       x@Text{} -> x
+    def flatten(doc: Doc) -> Doc:
+        """Flatten, but don’t report whether anything changes."""
+        #       FlatAlt _ y     -> flatten y
+        if isinstance(doc, DocFlatAlt) and [y := doc.second]:
+            return flatten(y)
+        #       Cat x y         -> Cat (flatten x) (flatten y)
+        if isinstance(doc, DocCat) and [x := doc.first, y := doc.second]:
+            return DocCat(flatten(x), flatten(y))
+        #       Nest i x        -> Nest i (flatten x)
+        if isinstance(doc, DocNest) and [i := doc.columns, x := doc.doc]:
+            return DocNest(i, flatten(x))
+        #       Line            -> Fail
+        if isinstance(doc, DocLine):
+            return DocFail()
+        #       x@Fail   -> x
+        #       x@Empty  -> x
+        #       x@Char{} -> x
+        #       x@Text{} -> x
+        if isinstance(doc, (DocFail, DocEmpty, DocChar, DocText)):
+            return doc
+        #       Union x _       -> flatten x
+        if isinstance(doc, DocUnion) and [x := doc.first]:
+            return flatten(x)
+        #       Column f        -> Column (flatten . f)
+        if isinstance(doc, DocColumn) and [f := doc.action]:
+            return DocColumn(compose(flatten, f))
+        #       WithPageWidth f -> WithPageWidth (flatten . f)
+        if isinstance(doc, DocWithPageWidth) and [f := doc.action]:
+            return DocWithPageWidth(compose(flatten, f))
+        #       Nesting f       -> Nesting (flatten . f)
+        if isinstance(doc, DocNesting) and [f := doc.action]:
+            return DocNesting(compose(flatten, f))
+        #       Annotated ann x -> Annotated ann (flatten x)
+        if isinstance(doc, DocAnnotated) and [ann := doc.tag, x := doc.doc]:
+            return DocAnnotated(ann, flatten(x))
+        notimplemented("changesUponFlattening.flatten", doc)
+    # changesUponFlattening = \doc -> case doc of
+    #   FlatAlt _ y     -> Flattened (flatten y)
+    #   Line            -> NeverFlat
+    #   Union x _       -> Flattened x
+    #   Nest i x        -> fmap (Nest i) (changesUponFlattening x)
+    #   Annotated ann x -> fmap (Annotated ann) (changesUponFlattening x)
+    #
+    #   Column f        -> Flattened (Column (flatten . f))
+    #   Nesting f       -> Flattened (Nesting (flatten . f))
+    #   WithPageWidth f -> Flattened (WithPageWidth (flatten . f))
+    #
+    #   Cat x y -> case (changesUponFlattening x, changesUponFlattening y) of
+    #       (NeverFlat    ,  _          ) -> NeverFlat
+    #       (_            , NeverFlat   ) -> NeverFlat
+    #       (Flattened x' , Flattened y') -> Flattened (Cat x' y')
+    #       (Flattened x' , AlreadyFlat ) -> Flattened (Cat x' y)
+    #       (AlreadyFlat  , Flattened y') -> Flattened (Cat x y')
+    #       (AlreadyFlat  , AlreadyFlat ) -> AlreadyFlat
+    #
+    #   Empty  -> AlreadyFlat
+    #   Char{} -> AlreadyFlat
+    #   Text{} -> AlreadyFlat
+    #   Fail   -> NeverFlat
+
+    #   FlatAlt _ y     -> Flattened (flatten y)
+    if isinstance(doc, DocFlatAlt) and [y := doc.second]:
+        return Flattened(flatten(y))
+    #   Line            -> NeverFlat
+    if isinstance(doc, DocLine):
+        return NeverFlat()
+    #   Union x _       -> Flattened x
+    if isinstance(doc, DocUnion) and [x := doc.first]:
+        return Flattened(x)
+    #   Nest i x        -> fmap (Nest i) (changesUponFlattening x)
+    if isinstance(doc, DocNest) and [i := doc.columns, x := doc.doc]:
+        return fmap(lambda doc: DocNest(i, doc), changesUponFlattening(x))
+    #   Annotated ann x -> fmap (Annotated ann) (changesUponFlattening x)
+    if isinstance(doc, DocAnnotated) and [ann := doc.tag, x := doc.doc]:
+        return fmap(lambda doc: DocAnnotated(ann, doc), changesUponFlattening(x))
+    #   Column f        -> Flattened (Column (flatten . f))
+    if isinstance(doc, DocColumn) and [f := doc.action]:
+        return Flattened(DocColumn(compose(flatten, f)))
+    #   Nesting f       -> Flattened (Nesting (flatten . f))
+    if isinstance(doc, DocNesting) and [f := doc.action]:
+        return Flattened(DocNesting(compose(flatten, f)))
+    #   WithPageWidth f -> Flattened (WithPageWidth (flatten . f))
+    if isinstance(doc, DocWithPageWidth) and [f := doc.action]:
+        return Flattened(DocWithPageWidth(compose(flatten, f)))
+    #   Cat x y -> case (changesUponFlattening x, changesUponFlattening y) of
+    if isinstance(doc, DocCat) and [x := doc.first, y := doc.second]:
+        x0 = changesUponFlattening(x)
+        #       (NeverFlat    ,  _          ) -> NeverFlat
+        if isinstance(x0, NeverFlat):
+            return NeverFlat()
+        y0 = changesUponFlattening(y)
+        #       (_            , NeverFlat   ) -> NeverFlat
+        if isinstance(y0, NeverFlat):
+            return NeverFlat()
+        #       (Flattened x' , Flattened y') -> Flattened (Cat x' y')
+        if isinstance(x0, Flattened) and isinstance(y0, Flattened) and [x_ := x0.a, y_ := y0.a]:
+            return Flattened(DocCat(x_, y_))
+        #       (Flattened x' , AlreadyFlat ) -> Flattened (Cat x' y)
+        if isinstance(x0, Flattened) and isinstance(y0, AlreadyFlat) and [x_ := x0.a]:
+            return Flattened(DocCat(x_, y))
+        #       (AlreadyFlat  , Flattened y') -> Flattened (Cat x y')
+        if isinstance(x0, AlreadyFlat) and isinstance(y0, Flattened) and [y_ := y0.a]:
+            return Flattened(DocCat(x, y_))
+        #       (AlreadyFlat  , AlreadyFlat ) -> AlreadyFlat
+        if isinstance(x0, AlreadyFlat) and isinstance(y0, AlreadyFlat):
+            return AlreadyFlat()
+        return notimplemented("changesUponFlattening.Cat", x0, y0)
+    #   Empty  -> AlreadyFlat
+    if isinstance(doc, DocEmpty):
+        return AlreadyFlat()
+    #   Char{} -> AlreadyFlat
+    if isinstance(doc, DocChar):
+        return AlreadyFlat()
+    #   Text{} -> AlreadyFlat
+    if isinstance(doc, DocText):
+        return AlreadyFlat()
+    #   Fail   -> NeverFlat
+    if isinstance(doc, DocFail):
+        return NeverFlat()
+    return notimplemented("changesUponFlattening", doc)
+
 #
 #
 #
@@ -1161,8 +1539,7 @@ def encloseSep(left: Doc, right: Doc, sep: Doc, docs: List[Doc]) -> Doc:
     elif len(docs) <= 1 and [d := docs[0]]:
         return left <<sassoc>> d <<sassoc>> right
     else:
-        d = concatWith(lambda x, y: x <<sassoc>> sep <<sassoc>> y, docs)
-        return left <<sassoc>> d <<sassoc>> right
+        return cat(zipWith(sassocF, prepend(left, repeat(sep)), docs)) <<sassoc>> right
 
 
 # -- | Haskell-inspired variant of 'encloseSep' with braces and comma as
@@ -1183,9 +1560,23 @@ def encloseSep(left: Doc, right: Doc, sep: Doc, docs: List[Doc]) -> Doc:
 #                           (flatAlt " ]" "]")
 #                           ", "
 def list_(docs: List[Doc]) -> Doc:
-    return group(encloseSep(flatAlt(Doc.new("[ "), Doc.new("[")),
-                            flatAlt(Doc.new(" ]"), Doc.new("]")),
-                            Doc.new(", "),
+    """Haskell-inspired variant of 'encloseSep' with braces and comma as
+    separator.
+
+    >>> doc = list_(map_(pretty, [1,20,300,4000]))
+
+    >>> putDocW(80, doc)
+    [1, 20, 300, 4000]
+
+    >>> putDocW(10, doc)
+    [ 1
+    , 20
+    , 300
+    , 4000 ]
+    """
+    return group(encloseSep(flatAlt(pretty("[ "), pretty("[")),
+                            flatAlt(pretty(" ]"), pretty("]")),
+                            pretty(", "),
                             docs))
 
 
@@ -1206,9 +1597,23 @@ def list_(docs: List[Doc]) -> Doc:
 # tupled = group . encloseSep (flatAlt "( " "(")
 #                             (flatAlt " )" ")")
 def tupled(docs: List[Doc]) -> Doc:
-    return group(encloseSep(flatAlt(Doc.new("( "), Doc.new("(")),
-                            flatAlt(Doc.new(" )"), Doc.new(")")),
-                            Doc.new(", "),
+    """Haskell-inspired variant of 'encloseSep' with parentheses and comma as
+    separator.
+
+    >>> doc = tupled(map_(pretty, [1,20,300,4000]))
+
+    >>> putDocW(80, doc)
+    (1, 20, 300, 4000)
+
+    >>> putDocW(10, doc)
+    ( 1
+    , 20
+    , 300
+    , 4000 )
+    """
+    return group(encloseSep(flatAlt(pretty("( "), pretty("(")),
+                            flatAlt(pretty(" )"), pretty(")")),
+                            pretty(", "),
                             docs))
 #
 #
@@ -1225,7 +1630,21 @@ def tupled(docs: List[Doc]) -> Doc:
 # (<+>) :: Doc ann -> Doc ann -> Doc ann
 # x <+> y = x <> Char ' ' <> y
 # infixr 6 <+> -- like <>
-def Doc_add(x: Doc, y: Doc):
+def Doc_add(x: Union[Doc, str], y: Union[Doc, str]):
+    """@(x '<+>' y)@ concatenates document @x@ and @y@ with a @'space'@ in
+    between.
+
+    >>> pretty("hello") + pretty("world")
+    hello world
+
+    @
+    x '<+>' y = x '<>' 'space' '<>' y
+    @
+    """
+    if not isinstance(x, Doc):
+        x = pretty(x)
+    if not isinstance(y, Doc):
+        y = pretty(y)
     return hcat([x, DocChar(" "), y])
 #
 #
@@ -1252,6 +1671,26 @@ def Doc_add(x: Doc, y: Doc):
 # concatWith :: Foldable t => (Doc ann -> Doc ann -> Doc ann) -> t (Doc ann) -> Doc ann
 # concatWith f ds
 def concatWith(f, ds: List[Doc]):
+    """Concatenate all documents element-wise with a binary function.
+
+    @
+    'concatWith' _ [] = 'mempty'
+    'concatWith' (**) [x,y,z] = x ** y ** z
+    @
+
+    Multiple convenience definitions based on 'concatWith' are already predefined,
+    for example:
+
+    @
+    'hsep'    = 'concatWith' ('<+>')
+    'fillSep' = 'concatWith' (\\x y -> x '<>' 'softline' '<>' y)
+    @
+
+    This is also useful to define customized joiners:
+
+    >>> concatWith(lambda x, y: surround(dot(), x, y), map_(pretty, ["Prettyprinter", "Render", "Text"]))
+    'Prettyprinter.Render.Text'
+    """
     # #if !(FOLDABLE_TRAVERSABLE_IN_PRELUDE)
     #     | foldr (\_ _ -> False) True ds = mempty
     # #else
@@ -1259,7 +1698,7 @@ def concatWith(f, ds: List[Doc]):
     # #endif
     #     | otherwise = foldr1 f ds
     if null(ds):
-        return DocEmpty()
+        return mempty(Doc)
     else:
         return foldr1(f, ds)
 # {-# INLINE concatWith #-}
@@ -1283,6 +1722,22 @@ def concatWith(f, ds: List[Doc]):
 # hsep :: [Doc ann] -> Doc ann
 # hsep = concatWith (<+>)
 def hsep(docs: List[Doc]):
+    """@('hsep' xs)@ concatenates all documents @xs@ horizontally with @'<+>'@,
+    i.e. it puts a space between all entries.
+
+    >>> docs = Util.words("lorem ipsum dolor sit amet")
+
+    >>> hsep(docs)
+    lorem ipsum dolor sit amet
+
+    @'hsep'@ does not introduce line breaks on its own, even when the page is too
+    narrow:
+
+    >>> putDocW(5, hsep(docs))
+    lorem ipsum dolor sit amet
+
+    For automatic line breaks, consider using 'fillSep' instead.
+    """
     return concatWith(add, docs)
 #
 # -- | @('vsep' xs)@ concatenates all documents @xs@ above each other. If a
@@ -1315,6 +1770,34 @@ def hsep(docs: List[Doc]):
 # vsep :: [Doc ann] -> Doc ann
 # vsep = concatWith (\x y -> x <> line <> y)
 def vsep(docs: List[Doc]):
+    """@('vsep' xs)@ concatenates all documents @xs@ above each other. If a
+    'group' undoes the line breaks inserted by @vsep@, the documents are
+    separated with a 'space' instead.
+
+    Using 'vsep' alone yields
+
+    >>> Doc.new("prefix") + vsep([Doc.new(s) for s in ["text", "to", "lay", "out"]])
+    prefix text
+    to
+    lay
+    out
+
+    'group'ing a 'vsep' separates the documents with a 'space' if it fits the
+    page (and does nothing otherwise). See the @'sep'@ convenience function for
+    this use case.
+
+    The 'align' function can be used to align the documents under their first
+    element:
+
+    >>> Doc.new("prefix") + align(vsep([Doc.new(s) for s in ["text", "to", "lay", "out"]]))
+    prefix text
+           to
+           lay
+           out
+
+    Since 'group'ing a 'vsep' is rather common, 'sep' is a built-in for doing
+    that.
+    """
     return concatWith(lambda x, y: x <<sassoc>> line() <<sassoc>> y, docs)
 
 # -- | @('fillSep' xs)@ concatenates the documents @xs@ horizontally with @'<+>'@
@@ -1339,6 +1822,26 @@ def vsep(docs: List[Doc]):
 # fillSep :: [Doc ann] -> Doc ann
 # fillSep = concatWith (\x y -> x <> softline <> y)
 def fillSep(docs: List[Doc]):
+    """@('fillSep' xs)@ concatenates the documents @xs@ horizontally with @'<+>'@
+    as long as it fits the page, then inserts a @'line'@ and continues doing that
+    for all documents in @xs@. (@'line'@ means that if 'group'ed, the documents
+    are separated with a 'space' instead of newlines. Use 'fillCat' if you do not
+    want a 'space'.)
+
+    Let's print some words to fill the line:
+
+    >>> docs = take(20, cycle(Doc.new(["lorem", "ipsum", "dolor", "sit", "amet"])))
+    >>> putDocW(80, "Docs:" + fillSep(docs))
+    Docs: lorem ipsum dolor sit amet lorem ipsum dolor sit amet lorem ipsum dolor
+    sit amet lorem ipsum dolor sit amet
+
+    The same document, printed at a width of only 40, yields
+
+    >>> putDocW(40, pretty("Docs:") + fillSep(docs))
+    Docs: lorem ipsum dolor sit amet lorem
+    ipsum dolor sit amet lorem ipsum dolor
+    sit amet lorem ipsum dolor sit amet
+    """
     return concatWith(lambda x, y: x <<sassoc>> softline() <<sassoc>> y, docs)
 
 # -- | @('sep' xs)@ tries laying out the documents @xs@ separated with 'space's,
@@ -1400,6 +1903,15 @@ def sep(docs: List[Doc]):
 # hcat :: [Doc ann] -> Doc ann
 # hcat = concatWith (<>)
 def hcat(docs: List[Doc]) -> Doc:
+    """@('hcat' xs)@ concatenates all documents @xs@ horizontally with @'<>'@
+    (i.e. without any spacing).
+
+    It is provided only for consistency, since it is identical to 'mconcat'.
+
+    >>> docs = Util.words("lorem ipsum dolor")
+    >>> hcat(docs)
+    loremipsumdolor
+    """
     return concatWith(sassoc, docs)
 
 # -- | @('vcat' xs)@ vertically concatenates the documents @xs@. If it is
@@ -1421,6 +1933,23 @@ def hcat(docs: List[Doc]) -> Doc:
 # vcat :: [Doc ann] -> Doc ann
 # vcat = concatWith (\x y -> x <> line' <> y)
 def vcat(docs: List[Doc]):
+    """@('vcat' xs)@ vertically concatenates the documents @xs@. If it is
+    'group'ed, the line breaks are removed.
+
+    In other words @'vcat'@ is like @'vsep'@, with newlines removed instead of
+    replaced by 'space's.
+
+    >>> docs = Util.words("lorem ipsum dolor")
+    >>> vcat(docs)
+    lorem
+    ipsum
+    dolor
+    >>> group(vcat(docs))
+    loremipsumdolor
+
+    Since 'group'ing a 'vcat' is rather common, 'cat' is a built-in shortcut for
+    it.
+    """
     return concatWith(lambda x, y: x <<sassoc>> line_() <<sassoc>> y, docs)
 
 # -- | @('fillCat' xs)@ concatenates documents @xs@ horizontally with @'<>'@ as
@@ -1452,6 +1981,33 @@ def vcat(docs: List[Doc]):
 # fillCat :: [Doc ann] -> Doc ann
 # fillCat = concatWith (\x y -> x <> softline' <> y)
 def fillCat(docs: List[Doc]):
+    """@('fillCat' xs)@ concatenates documents @xs@ horizontally with @'<>'@ as
+    long as it fits the page, then inserts a @'line''@ and continues doing that
+    for all documents in @xs@. This is similar to how an ordinary word processor
+    lays out the text if you just keep typing after you hit the maximum line
+    length.
+
+    (@'line''@ means that if 'group'ed, the documents are separated with nothing
+    instead of newlines. See 'fillSep' if you want a 'space' instead.)
+
+    Observe the difference between 'fillSep' and 'fillCat'. 'fillSep'
+    concatenates the entries 'space'd when 'group'ed:
+
+    >>> docs = take(20, cycle(map_(pretty, ["lorem", "ipsum", "dolor", "sit", "amet"])))
+    >>> putDocW(40, Doc.new("Grouped:") + group(fillSep(docs)))
+    Grouped: lorem ipsum dolor sit amet
+    lorem ipsum dolor sit amet lorem ipsum
+    dolor sit amet lorem ipsum dolor sit
+    amet
+
+    On the other hand, 'fillCat' concatenates the entries directly when
+    'group'ed:
+
+    >>> putDocW(40, Doc.new("Grouped:") + group(fillCat(docs)))
+    Grouped: loremipsumdolorsitametlorem
+    ipsumdolorsitametloremipsumdolorsitamet
+    loremipsumdolorsitamet
+    """
     return concatWith(lambda x, y: x <<sassoc>> softline_() <<sassoc>> y, docs)
 
 # -- | @('cat' xs)@ tries laying out the documents @xs@ separated with nothing,
@@ -1476,6 +2032,26 @@ def fillCat(docs: List[Doc]):
 # cat :: [Doc ann] -> Doc ann
 # cat = group . vcat
 def cat(docs: List[Doc]):
+    """@('cat' xs)@ tries laying out the documents @xs@ separated with nothing,
+    and if this does not fit the page, separates them with newlines. This is what
+    differentiates it from 'vcat', which always lays out its contents beneath
+    each other.
+
+    >>> docs = Util.words("lorem ipsum dolor")
+    >>> putDocW(80, Doc.new("Docs:") + cat(docs))
+    Docs: loremipsumdolor
+
+    When there is enough space, the documents are put above one another:
+
+    >>> putDocW(10, Doc.new("Docs:") + cat(docs))
+    Docs: lorem
+    ipsum
+    dolor
+
+    @
+    'cat' = 'group' . 'vcat'
+    @
+    """
     return group(vcat(docs))
 
 #
@@ -1508,6 +2084,25 @@ def cat(docs: List[Doc]):
 #     go [d]    = [d]
 #     go (d:ds) = (d <> p) : go ds
 def punctuate(sep: Doc, docs: List[Doc]):
+    """@('punctuate' p xs)@ appends @p@ to all but the last document in @xs@.
+
+    >>> docs = punctuate(comma(), Util.words("lorem ipsum dolor sit amet"))
+    >>> putDocW(80, hsep(docs))
+    lorem, ipsum, dolor, sit, amet
+
+    The separators are put at the end of the entries, which we can see if we
+    position the result vertically:
+
+    >>> putDocW(20, vsep(docs))
+    lorem,
+    ipsum,
+    dolor,
+    sit,
+    amet
+
+    If you want put the commas in front of their elements instead of at the end,
+    you should use 'tupled' or, in general, 'encloseSep'.
+    """
     ds = [*docs]
     if len(ds) <= 1:
         return ds
@@ -1530,6 +2125,18 @@ def punctuate(sep: Doc, docs: List[Doc]):
 # column :: (Int -> Doc ann) -> Doc ann
 # column = Column
 def column(action: Callable[[Int], Doc]):
+    """Layout a document depending on which column it starts at. 'align' is
+    implemented in terms of 'column'.
+
+    >>> column(lambda l: pretty("Columns are") + pretty(l) <<sassoc>> pretty("-based."))
+    Columns are 0-based.
+
+    >>> doc = pretty("prefix") + column(lambda l: pretty("| <- column") + pretty(l))
+    >>> vsep([indent(n, doc) for n in [0, 4, 8]])
+    prefix | <- column 7
+        prefix | <- column 11
+            prefix | <- column 15
+    """
     return DocColumn(action)
 
 # -- | Layout a document depending on the current 'nest'ing level. 'align' is
@@ -1543,6 +2150,15 @@ def column(action: Callable[[Int], Doc]):
 # nesting :: (Int -> Doc ann) -> Doc ann
 # nesting = Nesting
 def nesting(action: Callable[[Int], Doc]):
+    """Layout a document depending on the current 'nest'ing level. 'align' is
+    implemented in terms of 'nesting'.
+
+    >>> doc = pretty("prefix") + nesting(lambda l: brackets(pretty("Nested:") + pretty(l)))
+    >>> vsep([indent(n, doc) for n in [0, 4, 8]])
+    prefix [Nested: 0]
+        prefix [Nested: 4]
+            prefix [Nested: 8]
+    """
     return DocNesting(action)
 
 # -- | @('width' doc f)@ lays out the document 'doc', and makes the column width
@@ -1561,6 +2177,17 @@ def nesting(action: Callable[[Int], Doc]):
 #         doc <> column (\colEnd ->
 #             f (colEnd - colStart)))
 def width(doc: Doc, f: Callable[[Int], Doc]):
+    """@('width' doc f)@ lays out the document 'doc', and makes the column width
+    of it available to a function.
+
+    >>> annotate = lambda doc: width(brackets(doc), lambda w: pretty(" <- width:") + pretty(w))
+    >>> align(vsep(map_(annotate, [pretty("---"), pretty("------"), indent(3, pretty("---")), vsep([pretty("---"), indent(4, pretty("---"))])])))
+    [---] <- width: 5
+    [------] <- width: 8
+    [   ---] <- width: 8
+    [---
+        ---] <- width: 8
+    """
     def colStart_fn(colStart: Int):
         def colEnd_fn(colEnd: Int):
             return f(colEnd - colStart)
@@ -1578,6 +2205,16 @@ def width(doc: Doc, f: Callable[[Int], Doc]):
 # pageWidth :: (PageWidth -> Doc ann) -> Doc ann
 # pageWidth = WithPageWidth
 def pageWidth(action: Callable[[PageWidth], Doc]):
+    """Layout a document depending on the page width, if one has been specified.
+
+    # >>> let prettyPageWidth (AvailablePerLine l r) = "Width:" <+> pretty l <> ", ribbon fraction:" <+> pretty r
+    >>> def prettyPageWidth(it: PageWidth): return (pretty("Width:") + pretty(l) <<sassoc>> pretty(", ribbon fraction:") + pretty(r)) if isinstance(it, AvailablePerLine) and [l := it.n, r := it.ribbon_width] else notimplemented("prettyPageWidth", it)
+    >>> doc = pretty("prefix") + pageWidth(compose(brackets, prettyPageWidth))
+    >>> putDocW(32, vsep([indent(n, doc) for n in [0, 4, 8]]))
+    prefix [Width: 32, ribbon fraction: 1.0]
+        prefix [Width: 32, ribbon fraction: 1.0]
+            prefix [Width: 32, ribbon fraction: 1.0]
+    """
     return DocWithPageWidth(action)
 
 #
@@ -1599,7 +2236,22 @@ def pageWidth(action: Callable[[PageWidth], Doc]):
 #     -> Doc ann
 #     -> Doc ann
 # fill n doc = width doc (\w -> spaces (n - w))
-#
+def fill(n: Int, doc: Doc) -> Doc:
+    """@('fill' i x)@ lays out the document @x@. It then appends @space@s until
+    the width is equal to @i@. If the width of @x@ is already larger, nothing is
+    appended.
+
+    This function is quite useful in practice to output a list of bindings:
+
+    >>> types = [("empty","Doc"), ("nest","Int -> Doc -> Doc"), ("fillSep","[Doc] -> Doc")]
+    >>> def ptype(it): name, tp = it; return fill(5, pretty(name)) + pretty("::") + pretty(tp)
+    >>> pretty("let") + align(vcat(map_(ptype, types)))
+    let empty :: Doc
+        nest  :: Int -> Doc -> Doc
+        fillSep :: [Doc] -> Doc
+    """
+    return width(doc, lambda w: spaces(n - w))
+
 # -- | @('fillBreak' i x)@ first lays out the document @x@. It then appends @space@s
 # -- until the width is equal to @i@. If the width of @x@ is already larger than
 # -- @i@, the nesting level is increased by @i@ and a @line@ is appended. When we
@@ -1622,6 +2274,20 @@ def pageWidth(action: Callable[[PageWidth], Doc]):
 #         then nest f line'
 #         else spaces (f - w))
 def fillBreak(i: Int, doc: Doc):
+    """@('fillBreak' i x)@ first lays out the document @x@. It then appends @space@s
+    until the width is equal to @i@. If the width of @x@ is already larger than
+    @i@, the nesting level is increased by @i@ and a @line@ is appended. When we
+    redefine @ptype@ in the example given in 'fill' to use @'fillBreak'@, we get
+    a useful variation of the output:
+
+    >>> types = [("empty","Doc"), ("nest","Int -> Doc -> Doc"), ("fillSep","[Doc] -> Doc")]
+    >>> def ptype(it): name, tp = it; return fillBreak(5, pretty(name)) + pretty("::") + pretty(tp)
+    >>> pretty("let") + align(vcat(map_(ptype, types)))
+    let empty :: Doc
+        nest  :: Int -> Doc -> Doc
+        fillSep
+              :: [Doc] -> Doc
+    """
     def fillBreak_fn(w: Int):
         if w > i:
             return nest(i, line_())
@@ -1636,6 +2302,7 @@ def fillBreak(i: Int, doc: Doc):
 #   | n == 1    = Char ' '
 #   | otherwise = Text n (textSpaces n)
 def spaces(n: Int):
+    """Insert a number of spaces. Negative values count as 0."""
     if n <= 0:
         return DocEmpty()
     elif n == 1:
@@ -1672,8 +2339,16 @@ def spaces(n: Int):
 # plural one multiple n
 #     | n == 1    = one
 #     | otherwise = multiple
-def plural(one: Doc, multiple: Doc, amount: Int):
-    return one if amount <= 1 else multiple
+def plural(one: Doc, multiple: Doc, amount: Int) -> Doc:
+    """@('plural' n one many)@ is @one@ if @n@ is @1@, and @many@ otherwise. A
+    typical use case is  adding a plural "s".
+
+    >>> things = [True]
+    >>> amount = length(things)
+    >>> pretty(things) + pretty("has") + pretty(amount) + plural(pretty("entry"), pretty("entries"), amount)
+    [True] has 1 entry
+    """
+    return pretty(one) if amount <= 1 else pretty(multiple)
 
 # -- | @('enclose' l r x)@ encloses document @x@ between documents @l@ and @r@
 # -- using @'<>'@.
@@ -2039,6 +2714,8 @@ class SChar(SimpleDocStream):
     rest: SimpleDocStream
     if TYPE_CHECKING:
         def __init__(self, char: Char, rest: SimpleDocStream): ...
+    def __repr__(self):
+        return f"SChar({self.char!r}) . {self.rest!r}"
 #
 #     -- | 'T.length' is /O(n)/, so we cache it in the 'Int' field.
 #     | SText !Int !Text (SimpleDocStream ann)
@@ -2049,6 +2726,8 @@ class SText(SimpleDocStream):
     rest: SimpleDocStream
     if TYPE_CHECKING:
         def __init__(self, size: Int, text: Text, rest: SimpleDocStream): ...
+    def __repr__(self):
+        return f"SText({self.text!r}) . {self.rest!r}"
 #
 #     -- | @Int@ = indentation level for the (next) line
 #     | SLine !Int (SimpleDocStream ann)
@@ -2058,6 +2737,8 @@ class SLine(SimpleDocStream):
     rest: SimpleDocStream
     if TYPE_CHECKING:
         def __init__(self, indentation_level: Int, rest: SimpleDocStream): ...
+    def __repr__(self):
+        return f"SLine({self.indentation_level!r}) . {self.rest!r}"
 #
 #     -- | Add an annotation to the remaining document.
 #     | SAnnPush ann (SimpleDocStream ann)
@@ -2067,6 +2748,8 @@ class SAnnPush(SimpleDocStream):
     rest: SimpleDocStream
     if TYPE_CHECKING:
         def __init__(self, ann: Any, rest: SimpleDocStream): ...
+    def __repr__(self):
+        return f"SAnnPush({self.ann!r}) . {self.rest!r}"
 #
 #     -- | Remove a previously pushed annotation.
 #     | SAnnPop (SimpleDocStream ann)
@@ -2075,6 +2758,8 @@ class SAnnPop(SimpleDocStream):
     rest: SimpleDocStream
     if TYPE_CHECKING:
         def __init__(self, rest: SimpleDocStream): ...
+    def __repr__(self):
+        return f"SAnnPop() . {self.rest!r}"
 #     deriving (Eq, Ord, Show, Generic, Typeable)
 #
 # -- | Remove all trailing space characters.
@@ -2346,6 +3031,8 @@ class LayoutOptions:
     if TYPE_CHECKING:
         def __init__(self, layoutPageWidth: PageWidth): ...
 
+
+
 # -- | The default layout options, suitable when you just want some output, and
 # -- don’t particularly care about the details. Used by the 'Show' instance, for
 # -- example.
@@ -2394,27 +3081,58 @@ def layoutPretty(options: LayoutOptions, doc: Doc) -> SimpleDocStream:
     # print('layoutPretty', options, doc)
     pageWidth_ = options.layoutPageWidth
     if isinstance(pageWidth_, AvailablePerLine) and [lineLength := pageWidth_.n, ribbonFraction := pageWidth_.ribbon_width]:
-        def fittingPredicate(lineIndent: Int, currentColumn: Int, _initialIndentY: Optional[Int], sdoc: SimpleDocStream):
-            return fits(remainingWidth(lineLength, ribbonFraction, lineIndent, currentColumn), sdoc)
+        def fittingPredicate(lineIndent: Int, currentColumn: Int, _initialIndentY: Callable[[], Optional[Int]], sdoc: SimpleDocStream):
+            w = remainingWidth(lineLength, ribbonFraction, lineIndent, currentColumn)
+            result = fits(w, sdoc)
+            # ind = indentation()
+            # print(ind+'layoutPretty.fittingPredicate', dict(w=w, lineIndent=lineIndent, currentColumn=currentColumn, initialIndentY=_initialIndentY))
+            # print(ind+"  ", sdoc)
+            # print(ind+"  ", w, result)
+            # print()
+            return result
+        # def fits(w: Int, sdoc: SimpleDocStream) -> Bool:
+        #     # print('layoutPretty.fits', w, sdoc)
+        #     if w < 0:
+        #         # breakpoint()
+        #         return False
+        #     if isinstance(sdoc, SFail):
+        #         return False
+        #     if isinstance(sdoc, SEmpty):
+        #         return True
+        #     if isinstance(sdoc, SChar) and [x := sdoc.rest]:
+        #         return fits(w - 1, x)
+        #     if isinstance(sdoc, SText) and [l := sdoc.size, x := sdoc.rest]:
+        #         return fits(w - l, x)
+        #     if isinstance(sdoc, SLine):
+        #         return True
+        #     if isinstance(sdoc, SAnnPush) and [x := sdoc.rest]:
+        #         return fits(w, x)
+        #     if isinstance(sdoc, SAnnPop) and [x := sdoc.rest]:
+        #         return fits(w, x)
+        #     notimplemented("layoutPretty.fits", sdoc)
         def fits(w: Int, sdoc: SimpleDocStream) -> Bool:
-            # print('layoutPretty.fits', w, sdoc)
-            if w < 0:
-                return False
-            if isinstance(sdoc, SFail):
-                return False
-            if isinstance(sdoc, SEmpty):
-                return True
-            if isinstance(sdoc, SChar) and [x := sdoc.rest]:
-                return fits(w - 1, x)
-            if isinstance(sdoc, SText) and [l := sdoc.size, x := sdoc.rest]:
-                return fits(w - l, x)
-            if isinstance(sdoc, SLine):
-                return True
-            if isinstance(sdoc, SAnnPush) and [x := sdoc.rest]:
-                return fits(w, x)
-            if isinstance(sdoc, SAnnPop) and [x := sdoc.rest]:
-                return fits(w, x)
-            notimplemented("layoutPretty.fits", sdoc)
+            while w >= 0:
+                cls = type(sdoc)
+                if cls is SFail:
+                    return False
+                elif cls is SEmpty:
+                    return True
+                elif cls is SChar:
+                    w -= 1
+                    sdoc = cast(SChar, sdoc).rest
+                elif cls is SText:
+                    d = cast(SText, sdoc)
+                    w -= d.size
+                    sdoc = d.rest
+                elif cls is SLine:
+                    return True
+                elif cls is SAnnPush:
+                    sdoc = cast(SAnnPush, sdoc).rest
+                elif cls is SAnnPop:
+                    sdoc = cast(SAnnPop, sdoc).rest
+                else:
+                    notimplemented("layoutPretty.fits", sdoc)
+            return False
         return layoutWadlerLeijen(fittingPredicate, pageWidth_, doc)
     elif isinstance(pageWidth_, Unbounded):
         return layoutUnbounded(doc)
@@ -2552,7 +3270,7 @@ def layoutPretty(options: LayoutOptions, doc: Doc) -> SimpleDocStream:
 #             SAnnPop s    -> go s
 def layoutUnbounded(doc: Doc) -> SimpleDocStream:
     """Layout a document with @Unbounded@ page width."""
-    def fittingPredicate(_lineIndent: Int, _currentColumn: Int, initialIndentY: Optional[Int], sdoc: SimpleDocStream):
+    def fittingPredicate(_lineIndent: Int, _currentColumn: Int, _initialIndentY: Callable[[], Optional[Int]], sdoc: SimpleDocStream):
         return not failsOnFirstLine(sdoc)
     def failsOnFirstLine(sds: SimpleDocStream):
         if isinstance(sds, SFail):
@@ -2582,7 +3300,7 @@ def layoutUnbounded(doc: Doc) -> SimpleDocStream:
 #     (FittingPredicate fits)
 #     pageWidth_
 #     doc
-def layoutWadlerLeijen(fits: Callable[[Int, Int, Optional[Int], SimpleDocStream], Bool], pageWidth_: PageWidth, doc: Doc):
+def layoutWadlerLeijen_(fits: Callable[[Int, Int, Callable[[], Optional[Int]], SimpleDocStream], Bool], pageWidth_: PageWidth) -> Callable[[Int, Int, LayoutPipeline], SimpleDocStream]:
     """The Wadler/Leijen layout algorithm"""
     # print('layoutWadlerLeijen', pageWidth_, doc)
     # = best 0 0 (Cons 0 doc Nil)
@@ -2624,43 +3342,71 @@ def layoutWadlerLeijen(fits: Callable[[Int, Int, Optional[Int], SimpleDocStream]
     def best(lineIndent: Int, currentColumn: Int, pipeline: LayoutPipeline) -> SimpleDocStream:
         nl = lineIndent
         cc = currentColumn
-        # print('best', nl, cc, pipeline)
+        #   best !_ !_ Nil           = SEmpty
         if isinstance(pipeline, LayoutPipelineNil):
             return SEmpty()
+        #   best nl cc (UndoAnn ds)  = SAnnPop (best nl cc ds)
         if isinstance(pipeline, LayoutPipelineUndoAnn) and [ds := pipeline.rest]:
-            return best(nl, cc, ds)
-        if isinstance(pipeline, LayoutPipelineCons) and [i := pipeline.lineIndent, d := pipeline.doc, ds := pipeline.rest]:
+            return SAnnPop(best(nl, cc, ds))
+        #   best nl cc (Cons i d ds) = case d of
+        if isinstance(pipeline, LayoutPipelineCons) and [
+            i := pipeline.lineIndent,
+            d := pipeline.doc,
+            ds := pipeline.rest]:
+            #       Fail            -> SFail
             if isinstance(d, DocFail):
                 return SFail()
+            #       Empty           -> best nl cc ds
             if isinstance(d, DocEmpty):
                 return best(nl, cc, ds)
+            #       Char c          -> let !cc' = cc+1 in SChar c (best nl cc' ds)
             if isinstance(d, DocChar) and [c := d.char]:
                 cc_ = cc+1
                 return SChar(c, best(nl, cc_, ds))
+            #       Text l t        -> let !cc' = cc+l in SText l t (best nl cc' ds)
             if isinstance(d, DocText) and [l := d.size, t := d.text]:
                 cc_ = cc + l
                 return SText(l, t, best(nl, cc_, ds))
+            #       Line            -> let x = best i i ds
+            #                              -- Don't produce indentation if there's no
+            #                              -- following text on the same line.
+            #                              -- This prevents trailing whitespace.
+            #                              i' = case x of
+            #                                  SEmpty  -> 0
+            #                                  SLine{} -> 0
+            #                                  _       -> i
+            #                          in SLine i' x
             if isinstance(d, DocLine):
                 x = best(i, i, ds)
                 i_ = 0 if isinstance(x, (SEmpty, SLine)) else i
                 return SLine(i_, x)
+            #       FlatAlt x _     -> best nl cc (Cons i x ds)
             if isinstance(d, DocFlatAlt) and [x := d.first]:
                 return best(nl, cc, LayoutPipelineCons(i, x, ds))
+            #       Cat x y         -> best nl cc (Cons i x (Cons i y ds))
             if isinstance(d, DocCat) and [x := d.first, y := d.second]:
                 return best(nl, cc, LayoutPipelineCons(i, x, LayoutPipelineCons(i, y, ds)))
+            #       Nest j x        -> let !ij = i+j in best nl cc (Cons ij x ds)
             if isinstance(d, DocNest) and [j := d.columns, x := d.doc]:
                 ij = i + j
                 return best(nl, cc, LayoutPipelineCons(ij, x, ds))
+            #       Union x y       -> let x' = best nl cc (Cons i x ds)
+            #                              y' = best nl cc (Cons i y ds)
+            #                          in selectNicer nl cc x' y'
             if isinstance(d, DocUnion) and [x := d.first, y := d.second]:
-                x_ = best(nl, cc, LayoutPipelineCons(i, x, ds))
-                y_ = best(nl, cc, LayoutPipelineCons(i, y, ds))
+                x_ = memoize(lambda: best(nl, cc, LayoutPipelineCons(i, x, ds)))
+                y_ = memoize(lambda: best(nl, cc, LayoutPipelineCons(i, y, ds)))
                 return selectNicer(nl, cc, x_, y_)
+            #       Column f        -> best nl cc (Cons i (f cc) ds)
             if isinstance(d, DocColumn) and [f := d.action]:
                 return best(nl, cc, LayoutPipelineCons(i, f(cc), ds))
+            #       WithPageWidth f -> best nl cc (Cons i (f pageWidth_) ds)
             if isinstance(d, DocWithPageWidth) and [f := d.action]:
                 return best(nl, cc, LayoutPipelineCons(i, f(pageWidth_), ds))
+            #       Nesting f       -> best nl cc (Cons i (f i) ds)
             if isinstance(d, DocNesting) and [f := d.action]:
                 return best(nl, cc, LayoutPipelineCons(i, f(i), ds))
+            #       Annotated ann x -> SAnnPush ann (best nl cc (Cons i x (UndoAnn ds)))
             if isinstance(d, DocAnnotated) and [ann := d.tag, x := d.doc]:
                 return SAnnPush(ann, best(nl, cc, LayoutPipelineCons(i, x, LayoutPipelineUndoAnn(ds))))
             notimplemented("layoutWadlerLeijen.best.LayoutPipelineCons", d)
@@ -2682,11 +3428,18 @@ def layoutWadlerLeijen(fits: Callable[[Int, Int, Optional[Int], SimpleDocStream]
     #   selectNicer lineIndent currentColumn x y
     #       | fits lineIndent currentColumn (initialIndentation y) x = x
     #       | otherwise = y
-    def selectNicer(lineIndent: Int, currentColumn: Int, x: SimpleDocStream, y: SimpleDocStream) -> SimpleDocStream:
-        if fits(lineIndent, currentColumn, initialIndentation(y), x):
-            return x
+    def selectNicer(lineIndent: Int, currentColumn: Int, x: Callable[[], SimpleDocStream], y: Callable[[], SimpleDocStream]) -> SimpleDocStream:
+        """Select the better fitting of two documents:
+        Choice A if it fits, otherwise choice B.
+
+        The fit of choice B is /not/ checked! It is ultimately the user's
+        responsibility to provide an alternative that can fit the page even when
+        choice A doesn't.
+        """
+        if fits(lineIndent, currentColumn, lambda: initialIndentation(y()), x()):
+            return x()
         else:
-            return y
+            return y()
 
     #   initialIndentation :: SimpleDocStream ann -> Maybe Int
     #   initialIndentation sds = case sds of
@@ -2702,8 +3455,13 @@ def layoutWadlerLeijen(fits: Callable[[Int, Int, Optional[Int], SimpleDocStream]
         if isinstance(sds, SAnnPop) and [s := sds.rest]:
             return initialIndentation(s)
         return None
-    return best(0, 0, LayoutPipelineCons(0, doc, LayoutPipelineNil()))
+    return best
 
+def layoutWadlerLeijen(fits: Callable[[Int, Int, Optional[Int], SimpleDocStream], Bool], pageWidth_: PageWidth, doc: Doc):
+    """The Wadler/Leijen layout algorithm"""
+    best = layoutWadlerLeijen_(fits, pageWidth_)
+    # breakpoint()
+    return best(0, 0, LayoutPipelineCons(0, doc, LayoutPipelineNil()))
 #
 #
 # {- Note [Choosing the right minNestingLevel for consistent smart layouts]

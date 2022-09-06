@@ -11,3 +11,6 @@ def hPutChar(h: Handle, c: str):
 def hPutStr(h: Handle, s: str):
     h.write(s)
     h.flush()
+
+def putStrLn(s: str):
+    print(s)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 from functools import singledispatch as dispatch, singledispatchmethod as dispatchmethod
 
 import collections.abc
@@ -48,7 +49,7 @@ def floor(a: T) -> Int:
 
 ifloor = infix(floor)
 
-def identity(a: A) -> A:
+def id_(a: A) -> A:
     """Identity function.
 
     id :: a -> a
@@ -148,9 +149,12 @@ class Semigroup(ABC):
         """https://hackage.haskell.org/package/base-4.17.0.0/docs/Data-Semigroup.html#v:stimes"""
         notimplemented("Semigroup.stimes", self, n)
 
+def sassocF(self: T, other: T) -> T:
+    return Semigroup.sassoc(self, other)
+
 @infix
 def sassoc(self: T, other: T) -> T:
-    return Semigroup.sassoc(self, other)
+    return sassocF(self, other)
 
 def sconcat(self: T, values: Iterable[T]) -> Sequence[T]:
     return Semigroup.sconcat(self, values)
@@ -267,7 +271,6 @@ if TYPE_CHECKING:
 
 def dispatch_last(f: Callable[..., T]):
     func: SingleDispatchCallable[T] = dispatch(f)
-    func.register
 
 
 def dispatch_2nd(f: Callable[[A, B], R]) -> Callable[[A, B], R]:
@@ -333,8 +336,11 @@ def replicate(n: Int, x):
 def cons(a: A, b: B) -> Tuple[A, B]:
     return a, b
 
-def prepend(a: T, bs: List[T]) -> List[T]:
-    return [a, *bs]
+def prepend(a: T, bs: Union[Iterable[T], List[T]]) -> List[T]:
+    if isinstance(bs, (tuple, list)):
+        return [a, *bs]
+    else:
+        return itertools.chain([a], bs)
 
 # foldr(cons, 1, range(10))
 #
@@ -347,11 +353,82 @@ class Show(ABC):
 def show(self) -> str:
     return Show.show(self)
 
-def repeat(self: T, times: Int) -> Iterable[T]:
-    return itertools.repeat(self, times)
+def repeat(self: T, times: Optional[Int] = None) -> Iterable[T]:
+    return itertools.repeat(self, times) if times is not None else itertools.repeat(self)
 
 class Error(Exception):
     pass
 
 def error(msg: str, *args):
     raise Error(msg, *args)
+
+@dispatch_2nd
+def Functor_fmap(f: Callable[[A], R], xs: Seq[A]) -> List[R]:
+    return [f(x) for x in xs]
+
+class Functor(ABC):
+    fmap = Functor_fmap
+
+def fmap(f, xs):
+    return Functor.fmap(f, xs)
+
+def map_(f, xs):
+    return fmap(f, xs)
+
+def cycle(x: Iterable[T]) -> Iterable[T]:
+    return itertools.cycle(x)
+
+def take(n: Int, x: Iterable[T]) -> List[T]:
+    return [v for v in itertools.islice(x, n)]
+
+@dispatch
+def length(x: Sized) -> Int:
+    return len(x)
+
+def dispatchmethod_dispatch_type(meta, attr: str, cls: Type[T]) -> Optional[Callable]:
+    dispatcher: SingleDispatchCallable = meta.__dict__[attr].dispatcher
+    fn = dispatcher.dispatch(cls)
+    if fn is not dispatcher.registry[object]: # default
+        return fn
+
+
+class Monoid(ABC):
+    #     mempty = emptyDoc
+    @dispatchmethod
+    def mempty(self: Type[T]) -> T:
+        if fn := dispatchmethod_dispatch_type(Monoid, "mempty", self):
+            return fn()
+        return notimplemented("Monoid.mempty", self)
+    #     mappend = (<>)
+    @dispatchmethod
+    def mappend(self: Type[T], a: T, b: T) -> T:
+        if fn := dispatchmethod_dispatch_type(Semigroup, "sassoc", self):
+            return fn(a, b)
+        return notimplemented("Monoid.mappend", self)
+
+    #     mconcat = hcat
+    @dispatchmethod
+    def mconcat(self: Type[T], xs: List[T]) -> T:
+        if fn := dispatchmethod_dispatch_type(Monoid, "mconcat", self):
+            return fn(xs)
+        return notimplemented("Monoid.mconcat", self)
+
+
+def mempty(cls: Type[T]) -> T:
+    return Monoid.mempty(cls)
+
+def mappend(cls: Type[T], a: T, b: T) -> T:
+    return Monoid.mappend(cls, a, b)
+
+def mconcat(cls: Type[T], xs: List[T]) -> T:
+    return Monoid.mconcat(cls, xs)
+
+indent_level = CV.ContextVar[int]("indent_level", default=0)
+
+def indentation() -> str:
+    return replicate(indent_level.get(), " ")
+
+def with_indent(n=2):
+    return CV_let(indent_level, indent_level.get() + n)
+
+memoize = functools.lru_cache(maxsize=None)
